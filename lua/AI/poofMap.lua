@@ -39,6 +39,10 @@ function RecordResourcePoint(sResourceType,x,y,z,size)
     end
 end
 
+function GetMassPoints()
+    return tMassPoints  -- Simply returns the table of mass points
+end
+
 ----------General information and functions------
 
 function DetermineEnemyBase(aiBrain)

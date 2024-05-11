@@ -1,8 +1,32 @@
 -- poofFactoryLogic.lua
 -- Import necessary base libraries and utilities
 local AIUtils = import('/lua/ai/aiutilities.lua')
+local Game = import("/lua/game.lua")
 
--- Helper function to determine unit needs
+
+function GetBlueprintThatCanBuildOfCategory(aiBrain, iCategoryCondition, oFactory)
+    local tBlueprints = EntityCategoryGetUnitList(iCategoryCondition)
+    local tValidBlueprints = {}
+    local iValidBlueprints = 0
+
+    if oFactory.CanBuild then
+        local Game = import("/lua/game.lua")
+        local iArmyIndex = aiBrain:GetArmyIndex()
+        for _, sBlueprint in tBlueprints do
+            if oFactory:CanBuild(sBlueprint) == true and not(Game.IsRestricted(sBlueprint, iArmyIndex)) then
+                iValidBlueprints = iValidBlueprints + 1
+                tValidBlueprints[iValidBlueprints] = sBlueprint
+            end
+        end
+        if iValidBlueprints > 0 then
+            local iBPToBuild = math.random(1, iValidBlueprints)
+            return tValidBlueprints[iBPToBuild]
+        end
+    end
+    return nil
+end
+
+-- Function to determine strategic unit needs
 function DetermineUnitNeeds(aiBrain)
     local airThreat = aiBrain:GetThreatAtPosition(aiBrain:GetArmyStartPos(), 1, true, 'AntiAir')
     local landThreat = aiBrain:GetThreatAtPosition(aiBrain:GetArmyStartPos(), 1, true, 'Land')
@@ -24,24 +48,34 @@ function BuildUnit(builder, unitType)
 end
 
 -- Specific factory unit builder that uses strategic needs and prioritizes engineers
+-- poofFactoryLogic.lua
 function BuildFactoryUnit(factory)
     local aiBrain = factory:GetAIBrain()
     local numEngineers = aiBrain:GetCurrentUnits(categories.ENGINEER)
+    local engineerCap = 5  -- Set a cap for engineers
+    LOG('Current number of engineers: ' .. numEngineers)
 
-    -- Ensure a minimum of 5 engineers at all times
-    if numEngineers < 5 then
-        local engineerBlueprint = AIUtils.AIFindUnitToBuild(factory, categories.ENGINEER)
+    if numEngineers < engineerCap then
+        local engineerBlueprint = GetBlueprintThatCanBuildOfCategory(aiBrain, categories.ENGINEER, factory)
         if engineerBlueprint then
-            for i = numEngineers + 1, 5 do
+            LOG('Building more engineers up to cap.')
+            for i = numEngineers + 1, engineerCap do
                 aiBrain:BuildUnit(factory, engineerBlueprint, 1)
             end
         else
-            WARN('No engineer blueprint available')
+            LOG('No engineer blueprint available.')
         end
     else
-        -- Proceed with normal unit production logic based on strategic needs
+        LOG('Engineer cap reached, assessing other unit needs.')
         local needAir, needLand = DetermineUnitNeeds(aiBrain)
         local unitCategory = needAir and categories.AIR * categories.MOBILE or needLand and categories.LAND * categories.MOBILE or categories.MOBILE
-        BuildUnit(factory, unitCategory)
+        local blueprintToBuild = GetBlueprintThatCanBuildOfCategory(aiBrain, unitCategory, factory)
+        if blueprintToBuild then
+            aiBrain:BuildUnit(factory, blueprintToBuild, 1)
+            LOG('Building unit of category based on strategic needs: ' .. tostring(unitCategory))
+        else
+            LOG('No suitable blueprint found for requested unit type.')
+        end
     end
 end
+

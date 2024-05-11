@@ -1,5 +1,7 @@
 local poofMap = import('/mods/poofAI/lua/AI/poofMap.lua')
+LOG("Loading ACULogic module")
 local ACULogic = import('/mods/PoofAI/lua/AI/poofACULogic.lua')
+LOG("ACULogic module loaded: " .. repr(ACULogic))
 local NavUtils = import("/lua/sim/navutils.lua")
 local FactoryLogic = import('/mods/PoofAI/lua/AI/poofFactoryLogic.lua')
 local EngineerLogic = import('/mods/PoofAI/lua/AI/poofEngineerLogic.lua')
@@ -47,7 +49,7 @@ end
 
 function OnDamaged(oUnit, instigator)
     if not(oUnit.Dead) and oUnit:GetAIBrain().poofAI then
-        HandleDamage(oUnit, instigator)
+        ACULogic.HandleDamage(oUnit, instigator)
     end
 end
 
@@ -65,32 +67,6 @@ function OnUnitDeath(oUnit)
     end
 end
 
----------Support functions----------------------
-function GetBlueprintThatCanBuildOfCategory(aiBrain, iCategoryCondition, oFactory)
-    -- Returns nil if can't find any blueprints that can build; will identify all blueprints meeting iCategoryCondition that oFactory can build, and then select a random one of these to build
-
-    local tBlueprints = EntityCategoryGetUnitList(iCategoryCondition)
-    local tValidBlueprints = {}
-    local iValidBlueprints = 0
-
-    if oFactory.CanBuild then
-        local Game = import("/lua/game.lua")
-        local iArmyIndex = aiBrain:GetArmyIndex()
-        for _, sBlueprint in tBlueprints do
-            if oFactory:CanBuild(sBlueprint) == true and not(Game.IsRestricted(sBlueprint, iArmyIndex)) then
-                iValidBlueprints = iValidBlueprints + 1
-                tValidBlueprints[iValidBlueprints] = sBlueprint
-            end
-        end
-        if iValidBlueprints > 0 then
-            local iBPToBuild = math.random(1, iValidBlueprints)
-            return tValidBlueprints[iBPToBuild]
-        end
-    end
-end
-
-
-
 ----------Deciding what orders to give to units-----------------
 
 function AssignLogicToUnit(oUnit, iOptionalDelayInSeconds)
@@ -100,13 +76,14 @@ function AssignLogicToUnit(oUnit, iOptionalDelayInSeconds)
     end
 
     local aiBrain = oUnit:GetAIBrain()
-
+    LOG("Assigning logic to unit: " .. oUnit:GetEntityId())
     if EntityCategoryContains(categories.COMMAND, oUnit.UnitId) then
-        HandleACU(oUnit)
+        LOG("Handling ACU for unit: " .. oUnit:GetEntityId())
+        ACULogic.HandleACU(oUnit)
     elseif EntityCategoryContains(categories.FACTORY, oUnit.UnitId) then
         FactoryLogic.BuildFactoryUnit(oUnit)
     elseif EntityCategoryContains(categories.ENGINEER, oUnit.UnitId) then
-        EngineerLogic.AssignTasksToEngineers(aiBrain)  -- Use the new function to assign tasks to engineers
+        EngineerLogic.AssignTasksToEngineers(oUnit) 
     elseif EntityCategoryContains(categories.LAND * categories.MOBILE * categories.DIRECTFIRE + categories.LAND * categories.MOBILE * categories.INDIRECTFIRE, oUnit.UnitId) then
         AttackNearestVisibleEnemy(oUnit)
     end
@@ -131,96 +108,6 @@ function CheckWhenUnitHasReachedDestination(oUnit, iDistanceWanted)
         WaitSeconds(1)
     end
     AssignLogicToUnit(oUnit)
-end
-
-function ProcessACUBuildOrder(oUnit)
-    --Considers the initial build order for the ACU - will just alternate for 1 pgen - 1 mex and get 2 land factories
-    local aiBrain = oUnit:GetAIBrain()
-    local iCurPGens = aiBrain:GetCurrentUnits(categories.STRUCTURE * categories.ENERGYPRODUCTION)
-    local iCurFactories = aiBrain:GetCurrentUnits(categories.FACTORY)
-    local iCurMexes = aiBrain:GetCurrentUnits(categories.STRUCTURE * categories.MASSEXTRACTION)
-
-    local sBlueprintToBuild
-    --LOG('iCurFactories='..iCurFactories..'; iCurMexes='..iCurMexes..'; iCurPGens='..iCurPGens)
-    if iCurFactories > 0 and iCurMexes < iCurPGens then
-        --Build a mex
-        BuildNearestAvailableMex(oUnit)
-    else
-        if iCurFactories > 0  and iCurPGens < 5 + iCurFactories then
-            sBlueprintToBuild = GetBlueprintThatCanBuildOfCategory(aiBrain, categories.STRUCTURE * categories.ENERGYPRODUCTION - categories.HYDROCARBON, oUnit)
-        else
-            sBlueprintToBuild = GetBlueprintThatCanBuildOfCategory(aiBrain, categories.FACTORY * categories.LAND, oUnit)
-        end
-        if sBlueprintToBuild then
-            BuildNormalBuilding(oUnit, sBlueprintToBuild, oUnit:GetPosition())
-        else
-            --LOG('Processing ACU build order - no action so will retry assigning logic in 5s')
-            ForkThread(AssignLogicToUnit, oUnit, 5)
-        end
-    end
-end
-
-function GetBuildLocation(aiBrain, sBlueprintToBuild, tSearchLocation)
-    --Searches for somewhere that sBlueprintToBuild can be built around tSearchLocation; doesnt search every possible location but instead searches 170 different locations in ever increasing distances
-
-    --LOG('GetBuildLocation triggered for sBlueprintToBuild='..sBlueprintToBuild..'; tSearchLocation='..repru(tSearchLocation))
-    if aiBrain:CanBuildStructureAt(sBlueprintToBuild, tSearchLocation) then return tSearchLocation
-    else
-        for iAdjust = 4, 52, 4 do
-            for iX = -iAdjust, iAdjust, iAdjust do
-                for iZ = -iAdjust, iAdjust, iAdjust do
-                    if not(iX == 0 and iZ == 0) then
-                        local tPotentialBuildLocation = {tSearchLocation[1] + iX, 0, tSearchLocation[3] + iZ}
-                        tPotentialBuildLocation[2] = GetSurfaceHeight(tPotentialBuildLocation[1], tPotentialBuildLocation[3])
-                        --LOG('Considering tPotentialBuildLocation='..repru(tPotentialBuildLocation)..'; Can build structure here='..tostring(aiBrain:CanBuildStructureAt(sBlueprintToBuild, tPotentialBuildLocation))..'; iX='..iX..'; iZ='..iZ..'; iAdjust='..iAdjust)
-                        if aiBrain:CanBuildStructureAt(sBlueprintToBuild, tPotentialBuildLocation) then
-                            --LOG('GetBuildLocation found tPotentialBuildLocation='..repru(tPotentialBuildLocation))
-                            return tPotentialBuildLocation
-                        end
-                    end
-                end
-            end
-        end
-    end
-    --LOG('GetBuildLocation end of code')
-end
-
-function BuildNormalBuilding(oUnit, sBlueprintToBuild, tSearchLocation)
-    --Tries to build sBLueprintToBuild near tSearchLocation (or sends the unit for logic assignment if it cant find anywhere to build)
-    local aiBrain = oUnit:GetAIBrain()
-    local tBuildLocation = GetBuildLocation(aiBrain, sBlueprintToBuild, tSearchLocation)
-    if tBuildLocation then
-        IssueTrackedBuild(oUnit, tBuildLocation, sBlueprintToBuild, false)
-    else
-        --LOG('BuildNormalBuilding - no build location so will retry assigning logic in 5s')
-        ForkThread(AssignLogicToUnit, oUnit, 5)
-    end
-end
-
-function BuildNearestAvailableMex(oUnit)
-    --Searches for the nearest available mex that oUnit can path to, and builds a mex there
-    local aiBrain = oUnit:GetAIBrain()
-    local sBlueprintToBuild = GetBlueprintThatCanBuildOfCategory(aiBrain, categories.STRUCTURE * categories.MASSEXTRACTION, oUnit)
-    if sBlueprintToBuild then
-        local tNearestMex, iNearestMexDist = GetNearestAvailableMexLocationAndDistance(oUnit)
-        if tNearestMex then
-            IssueTrackedBuild(oUnit, tNearestMex, sBlueprintToBuild, false)
-        end
-    end
-end
-
-function FactoryLogic.BuildFactoryUnit(oFactory)
-    --Decides what unit the factory should build (currently it just builds tanks and LABs)
-
-      --LOG('BuildFactoryUnit triggered for oFactory='..oFactory.UnitId..', EntityID='..oFactory.EntityId)
-    local aiBrain = oFactory:GetAIBrain()
-    local sBlueprintToBuild = GetBlueprintThatCanBuildOfCategory(aiBrain, categories.DIRECTFIRE * categories.MOBILE, oFactory)
-    if sBlueprintToBuild then
-        IssueTrackedFactoryBuild(oFactory, sBlueprintToBuild)
-    else
-        --LOG('BuildFactoryUnit - no unit to build so will retry assigning logic in 10s')
-        ForkThread(AssignLogicToUnit, oFactory, 10)
-    end
 end
 
 -----------Executing unit orders----------------------
