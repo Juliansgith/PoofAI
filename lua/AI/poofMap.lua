@@ -4,8 +4,9 @@ local NavUtils = import("/lua/sim/navutils.lua")
 bMapSetupRun = false
 tMassPoints = {}
 tHydroPoints = {}
+assignedMassPoints = {}  -- Track which mass points have been assigned
 
---Variables against a brain
+-- Variables against a brain
 reftEnemyBase = 'poofEnBase' --{x,y,z} of the enemy base
 
 function SetupMap(aiBrain)
@@ -19,9 +20,7 @@ function SetupMap(aiBrain)
     LOG('poofTemp setup')
 end
 
-function RecordResourcePoint(sResourceType,x,y,z,size)
-    --called by hook into simInit, more reliable method of figuring out if have adaptive map than using markers, as not all mass markers may have mexes generated on an adaptive map
-    --Whenever a resource location is created in the map, this is called, and will record the resource location into a table of mex points (tMassPoints) and hydro points (tHydroPoints) for referencing in later code
+function RecordResourcePoint(sResourceType, x, y, z, size)
     local bAlreadyRecorded = false
     local tResourceTableRef
     if sResourceType == 'Mass' then
@@ -29,18 +28,22 @@ function RecordResourcePoint(sResourceType,x,y,z,size)
     elseif sResourceType == 'Hydrocarbon' then
         tResourceTableRef = tHydroPoints
     end
-    if tResourceTableRef[1] then
-        for iEntry, tResource in tResourceTableRef do
-            if tResource[1] == x and tResource[3] == z then bAlreadyRecorded = true break end
+
+    -- Check if the point is already recorded by iterating over the table
+    if tResourceTableRef and next(tResourceTableRef) ~= nil then
+        for _, tResource in ipairs(tResourceTableRef) do
+            if tResource[1] == x and tResource[3] == z then
+                bAlreadyRecorded = true
+                break
+            end
         end
     end
-    if not(bAlreadyRecorded) then
-        table.insert(tResourceTableRef, {x,y,z})
+    if not bAlreadyRecorded then
+        table.insert(tResourceTableRef, {x, y, z})
+        LOG("RecordResourcePoint: New resource point recorded at (" .. x .. ", " .. z .. ")")
+    else
+        LOG("RecordResourcePoint: Resource point already recorded at (" .. x .. ", " .. z .. ")")
     end
-end
-
-function GetMassPoints()
-    return tMassPoints  -- Simply returns the table of mass points
 end
 
 ----------General information and functions------

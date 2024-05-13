@@ -1,112 +1,96 @@
--- EngineerLogic.lua
-local AIUtils = import('/lua/ai/aiutilities.lua')
-local Game = import("/lua/game.lua")
-local Utils = import('/lua/utilities.lua')
-local NavUtils = import("/lua/sim/navutils.lua")
-local MapData = import('/mods/PoofAI/lua/AI/poofMap.lua')  -- Import module that contains map-related data and functions
+-- Import necessary modules
+Map = import('/mods/PoofAI/lua/AI/poofMap.lua')
+Utilities = import('/mods/PoofAI/lua/AI/poofUtilities.lua')
 
--- Store mass points considered dangerous due to enemy presence
-local enemyNearbyMassPoints = {}
+resourcePoints = {}
 
--- Get a blueprint that can build specific categories, ensuring that the selected blueprint is not restricted
-function GetBlueprintThatCanBuildOfCategory(aiBrain, iCategoryCondition, unit)
-    local tBlueprints = EntityCategoryGetUnitList(iCategoryCondition)
-    local tValidBlueprints = {}
-    local iValidBlueprints = 0
-
-    if unit.CanBuild then
-        for _, sBlueprint in tBlueprints do
-            if unit:CanBuild(sBlueprint) then
-                iValidBlueprints = iValidBlueprints + 1
-                tValidBlueprints[iValidBlueprints] = sBlueprint
-            end
-        end
-        if iValidBlueprints > 0 then
-            return tValidBlueprints[math.random(1, iValidBlueprints)]  -- Randomly select a blueprint to build
-        end
+function InitializeResourcePoints()
+    for _, point in ipairs(Map.tMassPoints) do
+        table.insert(resourcePoints, {
+            x = point[1],
+            y = point[2],
+            z = point[3],
+            status = "available"  -- Initial status of each point
+        })
     end
-    return nil
+    LOG("Resource points initialized.")
 end
--- Assign tasks to engineers based on current needs and priorities
+
+-- Call this function after all modules are imported and ready
+ForkThread(function()
+    WaitSeconds(5)  -- Simulated delay
+    InitializeResourcePoints()
+end)
+
 function AssignTasksToEngineers(oUnit)
     local aiBrain = oUnit:GetAIBrain()
-    LOG("Assigning tasks to engineer: " .. oUnit:GetEntityId())
+    local currentPos = oUnit:GetPosition()
+    local x, y, z = currentPos[1], currentPos[2], currentPos[3]
 
-    -- Retrieve a list of engineers
-    local engineers = aiBrain:GetListOfUnits(categories.ENGINEER, false)
-    for _, engineer in engineers do
-        if not engineer:IsCommandActive() then  -- Check if the engineer has no active commands before assigning tasks
-            HandleMassExtraction(engineer, aiBrain)
-        end
-    end
-end
+    LOG("Engineer Position: x=" .. x .. ", z=" .. z)
 
--- Check the current energy status to prioritize energy production if necessary
-function CheckEnergyStatus(aiBrain)
-    local currentEnergy = aiBrain:GetEconomyStoredRatio('ENERGY')
-    return currentEnergy <= 0.1
-end
+    local energyIncome = aiBrain:GetEconomyIncome('ENERGY')
+    local massIncome = aiBrain:GetEconomyIncome('MASS')
+    local energyUsage = aiBrain:GetEconomyUsage('ENERGY')
+    local massUsage = aiBrain:GetEconomyUsage('MASS')
+    local energyStoredRatio = aiBrain:GetEconomyStoredRatio('ENERGY')
+    local massStoredRatio = aiBrain:GetEconomyStoredRatio('MASS')
+    local energyTrend = aiBrain:GetEconomyTrend('ENERGY')
+    local massTrend = aiBrain:GetEconomyTrend('MASS')
 
--- Build energy structures if the energy status is low
-function BuildEnergyStructures(engineer, aiBrain)
-    local buildLocation = engineer:GetPosition()  -- Simplified: should ideally find a suitable location
-    IssueClearCommands({engineer})  -- Clear any existing commands
-    local blueprintId = GetBlueprintThatCanBuildOfCategory(aiBrain, categories.ENERGYPRODUCTION, engineer)
-    if blueprintId then
-        LOG('Attempting to build energy structure: Blueprint ID ' .. blueprintId)
-        local success = IssueBuildMobile({engineer}, buildLocation, blueprintId)
-        if success then
-            LOG('Build command issued successfully.')
-        else
-            LOG('Failed to issue build command.')
-        end
-    else
-        LOG('No valid blueprint found for energy structures.')
-    end
-end
+    LOG("Economic Report: Energy Income=" .. energyIncome .. ", Mass Income=" .. massIncome)
 
-function HandleMassExtraction(engineer, aiBrain)
-    local massPoints = MapData.GetMassPoints()  -- Ensure this is correctly implemented to retrieve mass points
     local closestPoint = nil
     local minDist = math.huge
-    local engineerPos = engineer:GetPosition()
 
-    for _, point in pairs(massPoints) do
-        local dist = VDist2(engineerPos[1], engineerPos[3], point[1], point[3])
-        if dist < minDist then
-            closestPoint = {point[1], GetTerrainHeight(point[1], point[3]), point[3]}
-            minDist = dist
+    -- Check each point's availability and distance
+    for index, point in ipairs(resourcePoints) do
+        if point.status == "available" then
+            local dist = VDist2(x, z, point.x, point.z)
+            LOG("Checking Point " .. index .. ": (" .. point.x .. ", " .. point.z .. "), Distance=" .. dist)
+            if dist < minDist then
+                minDist = dist
+                closestPoint = point
+                LOG("New Closest Point: (" .. point.x .. ", " .. point.z .. "), Distance=" .. dist)
+            end
         end
     end
 
+    -- Try to initiate building at the closest point found
     if closestPoint then
-        local blueprintId = GetBlueprintThatCanBuildOfCategory(aiBrain, categories.MASSEXTRACTION, engineer)
-        if blueprintId then
-            LOG('Sending engineer to build at closest mass point: ' .. repr(closestPoint))
-            IssueClearCommands({engineer})
-            local success = IssueBuildMobile({engineer}, closestPoint, blueprintId)
-            if success then
-                LOG('Build command issued successfully at ' .. tostring(closestPoint))
-            else
-                LOG('Failed to issue build command at ' .. tostring(closestPoint))
-            end
+        local position = {closestPoint.x, 0, closestPoint.z}
+        LOG("Found Closest Point: X=" .. position[1] .. " Z=" .. position[3])
+        local massExtractorBlueprint = Utilities.GetBlueprintThatCanBuildOfCategory(aiBrain, categories.MASSEXTRACTION * categories.TECH1, oUnit)
+    if massExtractorBlueprint then
+        LOG("Blueprint obtained for Mass Extractor: " .. massExtractorBlueprint)
+    else
+        LOG("Failed to obtain Blueprint for Mass Extractor")
+    end
+
+    LOG("Attempting to Build Mass Extractor at: X=" .. position[1] .. ", Z=" .. position[3])
+    if Utilities.CanBuildAt(aiBrain, massExtractorBlueprint, position) then
+        LOG("Can build at the location. Initiating build command.")
+        Utilities.AttemptToBuild(aiBrain, oUnit, massExtractorBlueprint, position)
+        closestPoint.status = "assigned"
+        LOG("Building Initiated for Mass Extractor at: X=" .. position[1] .. ", Z=" .. position[3])
+    else
+        LOG("CanBuildAt Check Failed at: X=" .. position[1] .. ", Z=" .. position[3] .. " - Possible terrain issue or blueprint mismatch.")
+    end
+else
+    LOG("No available mass points found or all are assigned.")
+end
+
+    -- Energy Production Building Logic based on economic conditions
+    if aiBrain:GetEconomyStoredRatio('ENERGY') < 0.5 or aiBrain:GetEconomyIncome('ENERGY') < aiBrain:GetEconomyUsage('ENERGY') then
+        local offsetPosition = {x + 20, 0, z + 20}  -- Slightly further to prevent overlap
+        local energyProductionBlueprint = Utilities.GetBlueprintThatCanBuildOfCategory(aiBrain, categories.ENERGYPRODUCTION * categories.TECH1, oUnit)
+        if energyProductionBlueprint and Utilities.CanBuildAt(aiBrain, energyProductionBlueprint, offsetPosition) then
+            Utilities.AttemptToBuild(aiBrain, oUnit, energyProductionBlueprint, offsetPosition)
+            LOG("AssignTasksToEngineers: Building energy production at (" .. offsetPosition[1] .. ", " .. offsetPosition[3] .. ")")
         else
-            LOG('No valid blueprint found for mass extraction.')
+            LOG("AssignTasksToEngineers: Cannot build energy production; position may be blocked or not on navigable terrain.")
         end
     else
-        LOG('No mass points available or suitable for building.')
+        LOG("AssignTasksToEngineers: Current energy conditions do not require building new energy production.")
     end
-end
-
-
-
-
--- Optional function to check and disrupt enemy mass extraction
-function CheckEnemyMassExtractors(engineer, aiBrain)
-    -- This function would contain logic similar to HandleMassExtraction but targeting enemy controlled areas
-end
-
--- Assign other maintenance or assist tasks to engineers not assigned to critical building tasks
-function AssignOtherTasks(engineer, aiBrain)
-    -- This function could assign engineers to assist with factory production or perform repairs
 end
