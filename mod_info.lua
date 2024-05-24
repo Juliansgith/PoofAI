@@ -1,4 +1,4 @@
-name = "Mini27AI"
+name = "PoofAI"
 uid = "poofai27-v001-55b4-92b6-64398e7ge43f"
 version = 1
 copyright = "MIT License"

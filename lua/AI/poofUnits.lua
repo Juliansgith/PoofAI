@@ -37,9 +37,11 @@ function OnConstructed(oEngineer, oUnit)
     --LOG('OnConstructed triggered for oUnit='..oUnit.UnitId..', EntityID='..oUnit.EntityId)
     if oEngineer:GetAIBrain().poofAI then
         AssignLogicToUnit(oEngineer)
+        LOG('Assigned logic to Engineer: '..oEngineer.UnitId..', EntityID='..oEngineer.EntityId)
     end
     if not(oUnit[subrefiOrderType]) and oUnit:GetAIBrain().poofAI then
         AssignLogicToUnit(oUnit)
+        LOG('Assigned logic to Unit: '..oUnit.UnitId..', EntityID='..oUnit.EntityId)
     end
 end
 
