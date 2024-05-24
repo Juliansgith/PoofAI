@@ -1,7 +1,5 @@
 local poofMap = import('/mods/poofAI/lua/AI/poofMap.lua')
-LOG("Loading ACULogic module")
 local ACULogic = import('/mods/PoofAI/lua/AI/poofACULogic.lua')
-LOG("ACULogic module loaded: " .. repr(ACULogic))
 local NavUtils = import("/lua/sim/navutils.lua")
 local FactoryLogic = import('/mods/PoofAI/lua/AI/poofFactoryLogic.lua')
 local EngineerLogic = import('/mods/PoofAI/lua/AI/poofEngineerLogic.lua')
@@ -18,7 +16,6 @@ refiOrderIssueAggressiveMove = 4
 refiOrderIssueBuild = 9
 refiOrderIssueFactoryBuild = 14
 
-
 --Variables against a unit
 reftoAttackingUnits = 'poofAtckUnt' --table of units told to attack this unit
 
@@ -26,8 +23,7 @@ reftoAttackingUnits = 'poofAtckUnt' --table of units told to attack this unit
 --When events are generated, they trigger an assessment of what the unit in question should be doing, which is then processed
 --For example, when a unit is first built, it has logic assigned to it, which might be to attack an enemy unit
 --When a unit is killed, if it was being attacked (per the above) then units with that attack order should have their orders reassessed
---Similalry, this reassessment can be triggered if an engineer finishes building a unit, or via special monitoring for move orders to check if the unit has got near the target location
-
+--Similarly, this reassessment can be triggered if an engineer finishes building a unit, or via special monitoring for move orders to check if the unit has got near the target location
 
 ---------------------EVENTS:----------------
 function OnCreate(oUnit)
@@ -68,7 +64,6 @@ function OnUnitDeath(oUnit)
 end
 
 ----------Deciding what orders to give to units-----------------
-
 function AssignLogicToUnit(oUnit, iOptionalDelayInSeconds)
     if iOptionalDelayInSeconds then
         WaitSeconds(iOptionalDelayInSeconds)
@@ -144,7 +139,7 @@ function GetNearestAvailableMexLocationAndDistance(oUnit)
     --Searches every mex and finds the one nearest to oUnit that oUnit can path to (assuming oUnit is a hover unit)
 
     local aiBrain = oUnit:GetAIBrain()
-    local sBlueprintToBuild = GetBlueprintThatCanBuildOfCategory(aiBrain, categories.STRUCTURE * categories.MASSEXTRACTION, oUnit)
+    local sBlueprintToBuild = Utilities.GetBlueprintThatCanBuildOfCategory(aiBrain, categories.STRUCTURE * categories.MASSEXTRACTION, oUnit)
     if sBlueprintToBuild then
         local iNearestMexDist = 10000
         local tNearestMex, iCurDist
@@ -199,6 +194,7 @@ function TrackOrder(oUnit, iType, tPosition, oTarget, sBlueprint)
     oUnit[subrefoOrderUnitTarget] = oTarget
     oUnit[subrefsOrderBlueprint] = sBlueprint
 end
+
 function IssueTrackedClearCommands(oUnit)
     --Clears unit's current orders
     IssueClearCommands({oUnit})

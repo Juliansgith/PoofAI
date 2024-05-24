@@ -1,10 +1,21 @@
 -- Import necessary modules
 Map = import('/mods/PoofAI/lua/AI/poofMap.lua')
 Utilities = import('/mods/PoofAI/lua/AI/poofUtilities.lua')
+local NavUtils = import("/lua/sim/navutils.lua")
+local AIUtils = import('/lua/ai/aiutilities.lua')
+local Game = import("/lua/game.lua")
 
 resourcePoints = {}
+massExtractorsBuilt = 0  -- Track the number of mass extractors built
+radarBuilt = false       -- Track if the radar has been built
+
+ForkThread(function()
+    WaitSeconds(10)  -- Increase delay to ensure all points are recorded
+    InitializeResourcePoints()
+end)
 
 function InitializeResourcePoints()
+    resourcePoints = {}
     for _, point in ipairs(Map.tMassPoints) do
         table.insert(resourcePoints, {
             x = point[1],
@@ -13,74 +24,88 @@ function InitializeResourcePoints()
             status = "available"  -- Initial status of each point
         })
     end
-    LOG("Resource points initialized.")
+    LOG("Resource points initialized. Total points: " .. tostring(table.getn(resourcePoints)))
+    for index, point in ipairs(resourcePoints) do
+        LOG("Resource Point " .. index .. ": x=" .. point.x .. ", y=" .. point.y .. ", z=" .. point.z .. ", status=" .. point.status)
+    end
 end
 
--- Call this function after all modules are imported and ready
-ForkThread(function()
-    WaitSeconds(5)  -- Simulated delay
-    InitializeResourcePoints()
-end)
-
 function AssignTasksToEngineers(oUnit)
+    local aiBrain = oUnit:GetAIBrain()
+    LOG("Assigning tasks to engineer: " .. oUnit:GetEntityId())
+
+    ForkThread(function()
+        while true do
+            if not radarBuilt and massExtractorsBuilt >= 2 then
+                BuildRadar(oUnit)
+            elseif massExtractorsBuilt < 2 then
+                BuildMassExtractor(oUnit)
+            else
+                BuildEnergyProduction(oUnit)
+            end
+            WaitSeconds(5)  -- Add a small delay between task checks to avoid overloading
+        end
+    end)
+end
+
+function BuildMassExtractor(oUnit)
+    local aiBrain = oUnit:GetAIBrain()
+    local tNearestMex, iNearestMexDist = GetNearestAvailableMexLocationAndDistance(oUnit)
+
+    if tNearestMex then
+        local position = {tNearestMex[1], 0, tNearestMex[3]}
+        LOG("Found Closest Point: X=" .. position[1] .. " Z=" .. position[3])
+
+        -- Mark the point as assigned
+        for _, point in ipairs(resourcePoints) do
+            if point.x == position[1] and point.z == position[3] then
+                point.status = "assigned"
+                break
+            end
+        end
+
+        local massExtractorBlueprint = Utilities.GetBlueprintThatCanBuildOfCategory(aiBrain, categories.MASSEXTRACTION * categories.TECH1, oUnit)
+
+        if massExtractorBlueprint then
+            LOG("Blueprint obtained for Mass Extractor: " .. massExtractorBlueprint)
+        else
+            LOG("Failed to obtain Blueprint for Mass Extractor")
+        end
+
+        LOG("Attempting to Build Mass Extractor at: X=" .. position[1] .. ", Z=" .. position[3])
+
+        if Utilities.CanBuildAt(aiBrain, massExtractorBlueprint, position) then
+            LOG("Can build at the location. Initiating build command.")
+            -- Re-check availability just before building
+            for _, point in ipairs(resourcePoints) do
+                if point.x == position[1] and point.z == position[3] then
+                    if point.status == "assigned" then
+                        Utilities.AttemptToBuild(aiBrain, oUnit, massExtractorBlueprint, position)
+                        point.status = "unavailable"
+                        massExtractorsBuilt = massExtractorsBuilt + 1  -- Increment the counter
+                        LOG("Building Initiated for Mass Extractor at: X=" .. position[1] .. ", Z=" .. position[3])
+                    else
+                        LOG("Point became unavailable. Reassigning tasks.")
+                        AssignTasksToEngineers(oUnit)
+                    end
+                    break
+                end
+            end
+        else
+            LOG("CanBuildAt Check Failed at: X=" .. position[1] .. ", Z=" .. position[3] .. " - Possible terrain issue or blueprint mismatch.")
+            -- Reassign tasks if build check fails
+            AssignTasksToEngineers(oUnit)
+        end
+    else
+        LOG("No available mass points found or all are assigned.")
+    end
+end
+
+function BuildEnergyProduction(oUnit)
     local aiBrain = oUnit:GetAIBrain()
     local currentPos = oUnit:GetPosition()
     local x, y, z = currentPos[1], currentPos[2], currentPos[3]
 
-    LOG("Engineer Position: x=" .. x .. ", z=" .. z)
-
-    local energyIncome = aiBrain:GetEconomyIncome('ENERGY')
-    local massIncome = aiBrain:GetEconomyIncome('MASS')
-    local energyUsage = aiBrain:GetEconomyUsage('ENERGY')
-    local massUsage = aiBrain:GetEconomyUsage('MASS')
-    local energyStoredRatio = aiBrain:GetEconomyStoredRatio('ENERGY')
-    local massStoredRatio = aiBrain:GetEconomyStoredRatio('MASS')
-    local energyTrend = aiBrain:GetEconomyTrend('ENERGY')
-    local massTrend = aiBrain:GetEconomyTrend('MASS')
-
-    LOG("Economic Report: Energy Income=" .. energyIncome .. ", Mass Income=" .. massIncome)
-
-    local closestPoint = nil
-    local minDist = math.huge
-
-    -- Check each point's availability and distance
-    for index, point in ipairs(resourcePoints) do
-        if point.status == "available" then
-            local dist = VDist2(x, z, point.x, point.z)
-            LOG("Checking Point " .. index .. ": (" .. point.x .. ", " .. point.z .. "), Distance=" .. dist)
-            if dist < minDist then
-                minDist = dist
-                closestPoint = point
-                LOG("New Closest Point: (" .. point.x .. ", " .. point.z .. "), Distance=" .. dist)
-            end
-        end
-    end
-
-    -- Try to initiate building at the closest point found
-    if closestPoint then
-        local position = {closestPoint.x, 0, closestPoint.z}
-        LOG("Found Closest Point: X=" .. position[1] .. " Z=" .. position[3])
-        local massExtractorBlueprint = Utilities.GetBlueprintThatCanBuildOfCategory(aiBrain, categories.MASSEXTRACTION * categories.TECH1, oUnit)
-    if massExtractorBlueprint then
-        LOG("Blueprint obtained for Mass Extractor: " .. massExtractorBlueprint)
-    else
-        LOG("Failed to obtain Blueprint for Mass Extractor")
-    end
-
-    LOG("Attempting to Build Mass Extractor at: X=" .. position[1] .. ", Z=" .. position[3])
-    if Utilities.CanBuildAt(aiBrain, massExtractorBlueprint, position) then
-        LOG("Can build at the location. Initiating build command.")
-        Utilities.AttemptToBuild(aiBrain, oUnit, massExtractorBlueprint, position)
-        closestPoint.status = "assigned"
-        LOG("Building Initiated for Mass Extractor at: X=" .. position[1] .. ", Z=" .. position[3])
-    else
-        LOG("CanBuildAt Check Failed at: X=" .. position[1] .. ", Z=" .. position[3] .. " - Possible terrain issue or blueprint mismatch.")
-    end
-else
-    LOG("No available mass points found or all are assigned.")
-end
-
-    -- Energy Production Building Logic based on economic conditions
     if aiBrain:GetEconomyStoredRatio('ENERGY') < 0.5 or aiBrain:GetEconomyIncome('ENERGY') < aiBrain:GetEconomyUsage('ENERGY') then
         local offsetPosition = {x + 20, 0, z + 20}  -- Slightly further to prevent overlap
         local energyProductionBlueprint = Utilities.GetBlueprintThatCanBuildOfCategory(aiBrain, categories.ENERGYPRODUCTION * categories.TECH1, oUnit)
@@ -92,5 +117,58 @@ end
         end
     else
         LOG("AssignTasksToEngineers: Current energy conditions do not require building new energy production.")
+    end
+end
+
+function BuildRadar(oUnit)
+    if radarBuilt then return end  -- Exit if radar is already built
+
+    local aiBrain = oUnit:GetAIBrain()
+    local currentPos = oUnit:GetPosition()
+    local x, y, z = currentPos[1], currentPos[2], currentPos[3]
+
+    local radarBlueprint = Utilities.GetBlueprintThatCanBuildOfCategory(aiBrain, categories.STRUCTURE * categories.RADAR, oUnit)
+    if radarBlueprint then
+        local radarPosition = {x + 10, 0, z + 10}  -- Slight offset to place the radar
+        if Utilities.CanBuildAt(aiBrain, radarBlueprint, radarPosition) then
+            Utilities.AttemptToBuild(aiBrain, oUnit, radarBlueprint, radarPosition)
+            LOG("AssignTasksToEngineers: Building radar at (" .. radarPosition[1] .. ", " .. radarPosition[3] .. ")")
+            radarBuilt = true  -- Set the radarBuilt flag to true
+        else
+            LOG("AssignTasksToEngineers: Cannot build radar; position may be blocked or not on navigable terrain.")
+        end
+    else
+        LOG("No radar blueprint available.")
+    end
+end
+
+function GetNearestAvailableMexLocationAndDistance(oUnit)
+    local aiBrain = oUnit:GetAIBrain()
+    local sBlueprintToBuild = Utilities.GetBlueprintThatCanBuildOfCategory(aiBrain, categories.STRUCTURE * categories.MASSEXTRACTION, oUnit)
+    if sBlueprintToBuild then
+        local iNearestMexDist = 10000
+        local tNearestMex, iCurDist
+        local iPlateauWanted = NavUtils.GetLabel('Hover', oUnit:GetPosition())
+        local tBasePosition = oUnit:GetPosition()
+
+        for iMex, tMex in Map.tMassPoints do
+            iCurDist = VDist2(tBasePosition[1], tBasePosition[3], tMex[1], tMex[3])
+            if iCurDist < iNearestMexDist then
+                if NavUtils.GetLabel('Hover', tMex) == iPlateauWanted then
+                    local pointAvailable = false
+                    for _, point in ipairs(resourcePoints) do
+                        if point.x == tMex[1] and point.z == tMex[3] and point.status == "available" then
+                            pointAvailable = true
+                            break
+                        end
+                    end
+                    if pointAvailable and aiBrain:CanBuildStructureAt(sBlueprintToBuild, tMex) then
+                        tNearestMex = {tMex[1], tMex[2], tMex[3]}
+                        iNearestMexDist = iCurDist
+                    end
+                end
+            end
+        end
+        return tNearestMex, iNearestMexDist
     end
 end

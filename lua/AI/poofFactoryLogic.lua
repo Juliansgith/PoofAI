@@ -1,35 +1,17 @@
--- poofFactoryLogic.lua
--- Import necessary base libraries and utilities
+-- pooffactorylogic.lua
 local AIUtils = import('/lua/ai/aiutilities.lua')
 local Game = import("/lua/game.lua")
-
+local Utilities = import('/mods/PoofAI/lua/AI/poofUtilities.lua')
 
 function GetBlueprintThatCanBuildOfCategory(aiBrain, iCategoryCondition, oFactory)
-    local tBlueprints = EntityCategoryGetUnitList(iCategoryCondition)
-    local tValidBlueprints = {}
-    local iValidBlueprints = 0
-
-    if oFactory.CanBuild then
-        local Game = import("/lua/game.lua")
-        local iArmyIndex = aiBrain:GetArmyIndex()
-        for _, sBlueprint in tBlueprints do
-            if oFactory:CanBuild(sBlueprint) == true and not(Game.IsRestricted(sBlueprint, iArmyIndex)) then
-                iValidBlueprints = iValidBlueprints + 1
-                tValidBlueprints[iValidBlueprints] = sBlueprint
-            end
-        end
-        if iValidBlueprints > 0 then
-            local iBPToBuild = math.random(1, iValidBlueprints)
-            return tValidBlueprints[iBPToBuild]
-        end
-    end
-    return nil
+    return Utilities.GetBlueprintThatCanBuildOfCategory(aiBrain, iCategoryCondition, oFactory)
 end
 
 -- Function to determine strategic unit needs
 function DetermineUnitNeeds(aiBrain)
-    local airThreat = aiBrain:GetThreatAtPosition(aiBrain:GetArmyStartPos(), 1, true, 'AntiAir')
-    local landThreat = aiBrain:GetThreatAtPosition(aiBrain:GetArmyStartPos(), 1, true, 'Land')
+    local armyStartPos = aiBrain:GetArmyStartPos()
+    local airThreat = aiBrain:GetThreatAtPosition(armyStartPos, 1, true, 'AntiAir')
+    local landThreat = aiBrain:GetThreatAtPosition(armyStartPos, 1, true, 'Land')
     local needAir = airThreat > landThreat
     local needLand = landThreat > airThreat
     return needAir, needLand
@@ -48,11 +30,10 @@ function BuildUnit(builder, unitType)
 end
 
 -- Specific factory unit builder that uses strategic needs and prioritizes engineers
--- poofFactoryLogic.lua
 function BuildFactoryUnit(factory)
     local aiBrain = factory:GetAIBrain()
     local numEngineers = aiBrain:GetCurrentUnits(categories.ENGINEER)
-    local engineerCap = 5  -- Set a cap for engineers
+    local engineerCap = 6  -- Set a cap for engineers
     LOG('Current number of engineers: ' .. numEngineers)
 
     if numEngineers < engineerCap then
@@ -78,4 +59,3 @@ function BuildFactoryUnit(factory)
         end
     end
 end
-
